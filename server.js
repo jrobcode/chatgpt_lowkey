@@ -26,7 +26,7 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
       file: createReadStream(filePath),
       model: 'whisper-1',
       response_format: 'text',
-      launguage // 👈 Pass language hint here
+      language // 👈 Pass language hint here
     });
 
     console.log('[Whisper Transcript]', transcription);
