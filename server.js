@@ -3,14 +3,14 @@ const multer = require('multer');
 const cors = require('cors');
 const { createReadStream, unlink } = require('fs');
 const { OpenAI } = require('openai');
+const ffmpeg = require('fluent-ffmpeg');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.use(cors());
 app.use(express.json());
@@ -18,15 +18,29 @@ app.use(express.json());
 const upload = multer({ dest: 'uploads/' });
 
 app.post('/upload-audio', upload.single('audio'), async (req, res) => {
-  const filePath = req.file.path;
-  const language = req.body.language || 'en'; // Default to English
+  const originalPath = req.file.path;
+  const convertedPath = `${originalPath}.wav`;
+  const language = req.body.language || 'en';
 
   try {
+    // Convert to WAV using ffmpeg
+    await new Promise((resolve, reject) => {
+      ffmpeg(originalPath)
+        .toFormat('wav')
+        .audioCodec('pcm_s16le')
+        .audioChannels(1)
+        .audioFrequency(16000)
+        .on('end', resolve)
+        .on('error', reject)
+        .save(convertedPath);
+    });
+
+    // Send converted file to Whisper
     const transcription = await openai.audio.transcriptions.create({
-      file: createReadStream(filePath),
+      file: createReadStream(convertedPath),
       model: 'whisper-1',
       response_format: 'text',
-      language // 👈 Pass language hint here
+      language
     });
 
     console.log('[Whisper Transcript]', transcription);
@@ -36,50 +50,10 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
     console.error('Error during transcription:', err);
     res.status(500).json({ error: 'Whisper transcription failed' });
   } finally {
-    unlink(filePath, () => {});
+    // Cleanup temp files
+    unlink(originalPath, () => {});
+    unlink(convertedPath, () => {});
   }
-});
-
-// 🆕 GPT response + TTS speech streaming
-app.get('/stream-chat', async (req, res) => {
-  const prompt = req.query.q;
-  if (!prompt) return res.status(400).send('Missing query');
-
-  try {
-    const gptStream = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: prompt }],
-      stream: true
-    });
-
-    let finalText = '';
-
-    for await (const chunk of gptStream) {
-      const text = chunk.choices?.[0]?.delta?.content;
-      if (text) {
-        finalText += text;
-      }
-    }
-
-    // Send GPT response to TTS
-    const ttsResponse = await openai.audio.speech.create({
-      model: 'tts-1',
-      voice: 'nova', // Change to shimmer, echo, etc. if desired
-      input: finalText
-    });
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Disposition', 'inline; filename="response.mp3"');
-
-    ttsResponse.body.pipe(res);
-  } catch (err) {
-    console.error('Error in GPT or TTS:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.listen(port, () => {
-  console.log(`✅ Server running at http://localhost:${port}`);
 });
 
 
