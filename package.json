@@ -3,7 +3,6 @@
     "version": "1.0.0",
     "description": "Voice-to-ChatGPT streaming server",
     "main": "server.js",
-    "type": "module",
     "scripts": {
         "start": "node server.js"
     },
